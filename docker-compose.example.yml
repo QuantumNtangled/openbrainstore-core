@@ -1,0 +1,83 @@
+name: openbrainstore
+
+# Single-box CLOUD self-host topology: app + Postgres (pgvector) + Caddy
+# (TLS). See CloudSetup.md. (No public domain needed? See LocalSetup.md for a
+# much lighter path -- no Docker, no Postgres container, no Caddy required.)
+# Copy .env.example to .env and fill it in. Caddy provisions a Let's Encrypt
+# cert automatically for OBS_DOMAIN (which must resolve to this host).
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: obs
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: openbrainstore
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U obs -d openbrainstore"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  app:
+    # Builds from the Dockerfile in this repo by default (`docker compose up
+    # -d --build`) -- works immediately, no registry needed. If you've set up
+    # this repo's publish workflow (.github/workflows/publish.yml) and want to
+    # pull a prebuilt image instead, set OBS_IMAGE in .env and run
+    # `docker compose pull` first; `image:` names what gets built either way.
+    build: .
+    image: ${OBS_IMAGE:-openbrainstore-app:local}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      OBS_BACKEND: postgres
+      # For row-level tenant isolation to apply, connect as a NON-superuser
+      # role (the postgres container's bootstrap "obs" user is a superuser and
+      # bypasses RLS). See CloudSetup.md "Harden: enable row-level security" to
+      # create obs_app (reuses POSTGRES_PASSWORD -- one secret to manage),
+      # then set OBS_PG_USER=obs_app in .env.
+      OBS_PG_DSN: postgresql://${OBS_PG_USER:-obs}:${POSTGRES_PASSWORD:?}@postgres:5432/openbrainstore
+      OBS_BLOB: fs            # or s3 (any S3-compatible store; set OBS_S3_* )
+      OBS_DATA_DIR: /home/obs/.openbrainstore
+      OBS_ALLOWED_HOSTS: ${OBS_DOMAIN:?}         # DNS-rebinding allowlist behind the proxy
+      OBS_AUTH: oauth                            # this server is its own OAuth 2.1 AS
+      OBS_ISSUER_URL: https://${OBS_DOMAIN:?}
+      OBS_GH_CLIENT_ID: ${OBS_GH_CLIENT_ID:?set OBS_GH_CLIENT_ID in .env}
+      OBS_GH_CLIENT_SECRET: ${OBS_GH_CLIENT_SECRET:?set OBS_GH_CLIENT_SECRET in .env}
+      OBS_GITHUB_ALLOWED_USERS: ${OBS_GITHUB_ALLOWED_USERS:?comma-separated GitHub logins}
+      OBS_MAX_MEMORIES: ${OBS_MAX_MEMORIES:-50000}
+      OBS_MAX_BODY_BYTES: ${OBS_MAX_BODY_BYTES:-65536}
+      OBS_RATE_PER_MIN: ${OBS_RATE_PER_MIN:-120}
+      OBS_UNAUTH_RATE_PER_MIN: ${OBS_UNAUTH_RATE_PER_MIN:-30}
+    volumes:
+      - obsdata:/home/obs/.openbrainstore
+    expose:
+      - "8787"
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2
+    depends_on:
+      - app
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      OBS_DOMAIN: ${OBS_DOMAIN:?set OBS_DOMAIN in .env (a hostname that resolves to this box)}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Optional: mount a ./web directory of static files to serve at the apex.
+      # - ./web:/srv/site:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  obsdata:
+  caddy_data:
+  caddy_config:

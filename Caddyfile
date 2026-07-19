@@ -1,0 +1,23 @@
+# TLS termination + routing:
+#   - the API surface (MCP, OAuth, beta-signup, contact) proxies to the app
+#   - everything else falls through to a static file root at /srv/site --
+#     leave that unmounted (see docker-compose.example.yml) and it just 404s,
+#     which is fine for a bare MCP server with no marketing site of its own
+# Auth lives in the app (OAuth 2.1); Caddy does not gate requests.
+# Caddy auto-provisions Let's Encrypt certs for both hostnames -- point
+# OBS_DOMAIN and www.OBS_DOMAIN at this host's IP before starting.
+
+{$OBS_DOMAIN} {
+	@api path /mcp* /authorize* /token* /register* /revoke* /github/* /.well-known/* /beta-signup /contact
+	handle @api {
+		reverse_proxy app:8787
+	}
+	handle {
+		root * /srv/site
+		file_server
+	}
+}
+
+www.{$OBS_DOMAIN} {
+	redir https://{$OBS_DOMAIN}{uri} permanent
+}

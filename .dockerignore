@@ -1,0 +1,14 @@
+.git
+.github
+.venv
+**/__pycache__
+**/*.pyc
+.pytest_cache
+tests
+*.tar.gz
+.gitattributes
+.gitignore
+Dockerfile
+.dockerignore
+docker-compose.yml
+Caddyfile

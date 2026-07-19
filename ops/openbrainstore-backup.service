@@ -1,0 +1,7 @@
+[Unit]
+Description=OpenBrainStore nightly Postgres backup
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/openbrainstore/ops/backup-postgres.sh

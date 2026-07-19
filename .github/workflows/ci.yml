@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.13"]
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: obs
+          POSTGRES_PASSWORD: obs
+          POSTGRES_DB: openbrainstore
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U obs -d openbrainstore"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # fail (not skip) the postgres half of the suite if the service is down
+      OBS_REQUIRE_PG: "1"
+      # connect as a NON-superuser role so RLS actually applies (the service
+      # container's bootstrap user is a superuser, which bypasses RLS)
+      OBS_PG_DSN: postgresql://obs_app:obs@localhost:5432/openbrainstore
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Create non-superuser app role + extensions
+        run: |
+          PGPASSWORD=obs psql -h localhost -U obs -d openbrainstore -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE EXTENSION IF NOT EXISTS vector;
+          CREATE EXTENSION IF NOT EXISTS pg_trgm;
+          CREATE ROLE obs_app LOGIN PASSWORD 'obs' NOSUPERUSER;
+          GRANT ALL ON SCHEMA public TO obs_app;
+          GRANT ALL ON ALL TABLES IN SCHEMA public TO obs_app;
+          GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO obs_app;
+          ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO obs_app;
+          ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO obs_app;
+          SQL
+      - name: Install
+        run: python -m pip install -e ".[postgres,dev]"
+      - name: Test (sqlite + postgres backends)
+        run: python -m pytest -q -ra
