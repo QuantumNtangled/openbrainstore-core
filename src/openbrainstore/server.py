@@ -173,7 +173,13 @@ def remember(
     about the user, a project, or a decision that future sessions should know.
 
     Args:
-        content: The memory itself, in plain prose. One fact per memory.
+        content: The memory itself, written as clean Markdown. One fact per
+            memory — atomicity first: a short memory is one or two plain
+            sentences, no formatting needed. When a memory genuinely needs
+            more (a plan, a checkpoint, a multi-part decision), structure it:
+            **bold** the key terms, use short `-` bullet lists, keep
+            paragraphs brief. Never one unbroken wall of prose — memories are
+            read back by humans as well as agents.
         type: One of: fact | decision | preference | event | commitment.
         entities: People/projects/things this memory is about (e.g. ["project-alpha", "sarah"]).
         tags: Topical tags (e.g. ["architecture", "postgres"]).
