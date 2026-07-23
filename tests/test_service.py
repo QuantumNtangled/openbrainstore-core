@@ -76,6 +76,48 @@ def test_fts_recall(backend):
     assert b["id"] in [r["id"] for r in out["results"]]
 
 
+def test_sort_browse_newest_and_oldest(backend):
+    a, b, c = seed(backend)
+    # no query, no filters + recency sort = browse latest
+    out = recall(backend, "testuser", sort="newest")
+    assert [r["id"] for r in out["results"]] == [c["id"], b["id"], a["id"]]
+    assert "browse" in out["lanes_run"]
+
+    out = recall(backend, "testuser", sort="oldest", limit=1)
+    assert [r["id"] for r in out["results"]] == [a["id"]]
+
+    # last-memory idiom
+    out = recall(backend, "testuser", sort="newest", limit=1)
+    assert [r["id"] for r in out["results"]] == [c["id"]]
+
+
+def test_sort_newest_with_query(backend):
+    a, _, c = seed(backend)
+    out = recall(backend, "testuser", filters={"kv": {"project": "okf"}}, sort="newest")
+    ids = [r["id"] for r in out["results"]]
+    assert ids.index(c["id"]) < ids.index(a["id"])
+
+
+def test_sort_rejects_unknown_order(backend):
+    with pytest.raises(ValueError, match="sort must be one of"):
+        recall(backend, "testuser", sort="sideways")
+
+
+def test_date_bounds_apply_to_all_lanes(backend):
+    seed(backend)
+    # fts would match, but the window excludes everything
+    out = recall(
+        backend, "testuser", query="replication standby",
+        filters={"until": "2000-01-01"},
+    )
+    assert out["results"] == []
+    out = recall(
+        backend, "testuser", query="replication standby",
+        filters={"since": "2000-01-01"},
+    )
+    assert out["results"] != []
+
+
 def test_graph_expansion(backend):
     a, _, c = seed(backend)
     out = recall(backend, "testuser", entities=["postgres"])

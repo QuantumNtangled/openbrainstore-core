@@ -6,10 +6,29 @@ Every recall is instrumented — recall failures are silent, so metrics are the
 only way to see them."""
 
 import time
+from datetime import datetime, timezone
 
 from . import config, embeddings
 from .backends.base import Backend
 from .normalize import normalize_entities
+
+SORT_ORDERS = ("relevance", "newest", "oldest")
+
+
+def _parse_ts(value: str) -> datetime:
+    dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def _within(created: str, since: str | None, until: str | None) -> bool:
+    ts = _parse_ts(created)
+    if since and ts < _parse_ts(since):
+        return False
+    if until and ts > _parse_ts(until):
+        return False
+    return True
 
 
 def _rrf(lanes: dict[str, list[str]]) -> list[tuple[str, float]]:
@@ -29,8 +48,11 @@ def recall(
     depth: int = 1,
     deep: bool = False,
     limit: int = config.DEFAULT_RECALL_LIMIT,
+    sort: str = "relevance",
 ) -> dict:
     t0 = time.perf_counter()
+    if sort not in SORT_ORDERS:
+        raise ValueError(f"sort must be one of {', '.join(SORT_ORDERS)}")
     backend.set_acting_user(user)
     filters = filters or {}
     entities = normalize_entities(entities)
@@ -41,6 +63,11 @@ def recall(
         lanes["structured"] = backend.lane_structured(user, filters, entities)
     if query:
         lanes["fts"] = backend.lane_fts(user, query)
+
+    # Browse mode: an explicit recency sort with nothing to match against is a
+    # request for "my latest memories", not an empty result.
+    if not lanes and sort != "relevance":
+        lanes["browse"] = backend.lane_structured(user, {}, [])
 
     # Lane 3: graph context from matched entities + top primary hits
     seeds = []
@@ -62,12 +89,20 @@ def recall(
         lanes["vector"] = embeddings.search(backend, user, query)
         fused = _rrf(lanes)
 
-    top = fused[:limit]
+    # since/until must bound EVERY lane, not just structured — fts/graph/vector
+    # hits outside the window are dropped here. Date bounds and recency sorts
+    # need the full matched set before the limit cut; the plain relevance path
+    # keeps the cheap top-N fetch.
+    since, until = filters.get("since"), filters.get("until")
+    bounded = bool(since or until)
+    top = fused if (bounded or sort != "relevance") else fused[:limit]
     rows = backend.get_memories([mem_id for mem_id, _ in top])
     results = []
     for mem_id, score in top:
         row = rows.get(mem_id)
         if not row:
+            continue
+        if bounded and not _within(row["created"], since, until):
             continue
         meta = row["meta"]
         results.append(
@@ -84,6 +119,12 @@ def recall(
                 "lanes": [name for name, ranked in lanes.items() if mem_id in ranked],
             }
         )
+
+    if sort != "relevance":
+        # created has second precision, so ties are common; ULID ids are
+        # monotonic and break them in true creation order.
+        results.sort(key=lambda r: (r["created"], r["id"]), reverse=(sort == "newest"))
+    results = results[:limit]
 
     duration_ms = round((time.perf_counter() - t0) * 1000, 2)
     backend.log_recall(

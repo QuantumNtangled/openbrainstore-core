@@ -203,6 +203,7 @@ def recall(
     depth: int = 1,
     deep: bool = False,
     limit: int = 10,
+    sort: str = "relevance",
 ) -> dict:
     """Retrieve memories. Runs a lane cascade: structured filters and full-text
     search first, graph expansion for related context, and a semantic vector
@@ -214,10 +215,14 @@ def recall(
         entities: Filter/expand by entities (e.g. ["project-alpha"]).
         tags: Filter by tags (any match).
         kv: Filter by structured key-values (near-miss keys are fuzzy-matched).
-        since / until: ISO date bounds on creation time (e.g. "2026-01-01").
+        since / until: ISO date bounds on creation time (e.g. "2026-01-01");
+            bounds apply across every lane, including full-text and vector.
         depth: Graph expansion hops, 1 or 2.
         deep: Force the semantic vector lane when your own confidence is low.
         limit: Max results.
+        sort: "relevance" (default), "newest", or "oldest". With no query or
+            filters at all, sort="newest" browses your latest memories —
+            e.g. sort="newest", limit=1 returns the last memory you stored.
 
     Returns results with ids, types, scores, bodies, and which lanes matched,
     plus lane instrumentation.
@@ -236,7 +241,7 @@ def recall(
     with get_backend() as backend:
         return run_recall(
             backend, _current_user(), query=query, filters=filters,
-            entities=entities, depth=depth, deep=deep, limit=limit,
+            entities=entities, depth=depth, deep=deep, limit=limit, sort=sort,
         )
 
 
