@@ -13,7 +13,7 @@ import pytest
 from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
 
-EXPECTED_TOOLS = {"remember", "recall", "get_memory_schema", "link", "forget", "export"}
+EXPECTED_TOOLS = {"remember", "update", "recall", "get_memory_schema", "link", "forget", "export"}
 
 
 def _free_port() -> int:

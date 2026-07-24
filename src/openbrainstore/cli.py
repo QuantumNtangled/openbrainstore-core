@@ -56,6 +56,15 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--kv", action="append")
     p.add_argument("--links", help="comma-separated ids of related memories")
 
+    p = sub.add_parser("update", help="revise an existing memory (omitted fields keep their values)")
+    p.add_argument("id")
+    p.add_argument("--content", default=None, help="replacement body (Markdown)")
+    p.add_argument("--type", default=None, choices=sorted(config.MEMORY_TYPES))
+    p.add_argument("--entities", default=None, help="replacement entities, comma-separated")
+    p.add_argument("--tags", default=None, help="replacement tags, comma-separated")
+    p.add_argument("--kv", nargs="*", default=None, metavar="k=v", help="replacement key-value pairs")
+    p.add_argument("--links", default=None, help="replacement outgoing links, comma-separated")
+
     p = sub.add_parser("link", help="link an existing memory to related memories")
     p.add_argument("id")
     p.add_argument("to", help="comma-separated memory ids to link to")
@@ -105,6 +114,13 @@ def main(argv: list[str] | None = None) -> None:
                 entities=_csv(args.entities), tags=_csv(args.tags),
                 kv=_kv_pairs(args.kv), links=_csv(args.links),
                 source_harness="cli",
+            ))
+        elif args.cmd == "update":
+            _print(service.update(
+                backend, args.id, content=args.content, type=args.type,
+                entities=_csv(args.entities), tags=_csv(args.tags),
+                kv=_kv_pairs(args.kv),
+                links=_csv(args.links) if args.links is not None else None,
             ))
         elif args.cmd == "link":
             _print(service.link(backend, args.id, _csv(args.to) or []))

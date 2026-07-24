@@ -136,6 +136,77 @@ def test_schema_vocabulary(backend):
     assert "sarah" in schema["entities"]
 
 
+def test_update_content_reprojects(backend):
+    a, _, _ = seed(backend)
+    out = service.update(backend, a["id"], content="Switched to Patroni after the beta scaling review.")
+    assert out["changed"] == ["content"]
+    # canonical blob revised
+    assert store.read_latest("testuser", a["id"]).body.startswith("Switched to Patroni")
+    # new words findable via fts; old words no longer LEXICALLY match it
+    # (the semantic lane may still surface it by meaning — that's correct)
+    hits = recall(backend, "testuser", query="Patroni scaling review")
+    assert hits["results"][0]["id"] == a["id"]
+    old = recall(backend, "testuser", query="warm standby replication")
+    assert all(r["id"] != a["id"] or "fts" not in r["lanes"] for r in old["results"])
+
+
+def test_update_metadata_only_preserves_body(backend):
+    a, _, _ = seed(backend)
+    out = service.update(backend, a["id"], tags=["Architecture", "Revisited"])
+    assert out["changed"] == ["tags"]
+    assert out["tags"] == ["architecture", "revisited"]  # normalized
+    row = backend.get_memories([a["id"]])[a["id"]]
+    assert "warm standby" in row["body"]                  # body untouched
+    assert out["created"] == a["created"]                 # created preserved
+
+
+def test_update_embedding_invalidation(backend):
+    pytest.importorskip("numpy")  # store_embedding needs the [vector] extra
+    a, _, _ = seed(backend)
+    backend.store_embedding(a["id"], [0.1] * 384)
+    assert a["id"] not in [i for i, _ in backend.pending_embeddings("testuser")]
+    # metadata-only update keeps the embedding
+    service.update(backend, a["id"], tags=["revisited"])
+    assert a["id"] not in [i for i, _ in backend.pending_embeddings("testuser")]
+    # body change drops it for re-embed (checked WITHOUT recalling: the
+    # vector lane self-heals pending embeddings during search)
+    service.update(backend, a["id"], content="Entirely new body text.")
+    assert a["id"] in [i for i, _ in backend.pending_embeddings("testuser")]
+
+
+def test_update_entities_rebuild_graph_edges(backend):
+    a, _, _ = seed(backend)
+    service.update(backend, a["id"], entities=["timescale"])
+    ids = [r["id"] for r in recall(backend, "testuser", entities=["timescale"])["results"]]
+    assert a["id"] in ids
+    assert a["id"] not in [
+        r["id"] for r in recall(backend, "testuser", entities=["postgres"])["results"]
+    ]
+
+
+def test_update_links_replace_not_append(backend):
+    a, b, c = seed(backend)
+    service.link(backend, a["id"], [b["id"]])
+    out = service.update(backend, a["id"], links=[c["id"]])
+    assert out["links"] == [c["id"]]
+    out = service.update(backend, a["id"], links=[])
+    assert out["links"] == []
+    with pytest.raises(ValueError, match="unknown memory ids"):
+        service.update(backend, a["id"], links=["mem_nope"])
+
+
+def test_update_noop_and_validation(backend):
+    a, _, _ = seed(backend)
+    assert service.update(backend, a["id"])["changed"] == []
+    assert service.update(backend, a["id"], type="decision")["changed"] == []  # same value
+    with pytest.raises(ValueError, match="not found"):
+        service.update(backend, a["id"] + "x", content="y")
+    with pytest.raises(ValueError, match="type must be one of"):
+        service.update(backend, a["id"], type="musing")
+    with pytest.raises(ValueError, match="non-empty"):
+        service.update(backend, a["id"], content="   ")
+
+
 def test_forget_tombstones(backend):
     a, _, _ = seed(backend)
     service.forget(backend, a["id"])

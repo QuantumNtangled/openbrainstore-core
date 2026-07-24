@@ -198,6 +198,40 @@ def remember(
 
 
 @mcp.tool()
+def update(
+    id: str,
+    content: str | None = None,
+    type: str | None = None,
+    entities: list[str] | None = None,
+    tags: list[str] | None = None,
+    kv: dict | None = None,
+    links: list[str] | None = None,
+) -> dict:
+    """Revise an existing memory — for corrections, status changes, and
+    reformatting. The id, created date, and every inbound link survive, so
+    prefer this over forget()+remember() when a memory is wrong or stale.
+    Discipline: a genuinely NEW fact deserves its own remember() linked to
+    this one — don't edit away what was true when it was written.
+
+    Args:
+        id: The memory to revise (an id returned by recall or remember).
+        content: Replacement body — clean Markdown, same guidance as remember.
+        type: Replacement type (fact | decision | preference | event | commitment).
+        entities / tags / kv: Replacement values. Omitted fields keep their
+            current values; passing a value REPLACES that field entirely.
+        links: REPLACES the outgoing link set (link() appends instead).
+
+    Returns the revised memory plus a `changed` list naming what moved
+    (empty if the update was a no-op).
+    """
+    with get_backend() as backend:
+        return service.update(
+            backend, id, content=content, type=type, entities=entities,
+            tags=tags, kv=kv, links=links, user=_current_user(),
+        )
+
+
+@mcp.tool()
 def recall(
     query: str | None = None,
     type: str | None = None,

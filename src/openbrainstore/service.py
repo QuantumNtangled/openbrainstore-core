@@ -107,6 +107,87 @@ def link(backend: Backend, id: str, to: list[str], user: str | None = None) -> d
     return {"id": mem.id, "links": mem.links, "updated": mem.updated, "changed": True}
 
 
+def update(
+    backend: Backend,
+    id: str,
+    content: str | None = None,
+    type: str | None = None,
+    entities: list[str] | None = None,
+    tags: list[str] | None = None,
+    kv: dict | None = None,
+    links: list[str] | None = None,
+    user: str | None = None,
+) -> dict:
+    """Revise an existing memory in place: same id, same created stamp, every
+    inbound link intact. Canonical files are immutable — this writes a NEW
+    version (latest wins, history retained) and re-projects; a changed body
+    drops the stored embedding so the vector lane re-embeds the new text.
+    Omitted fields keep their current values; links REPLACES the outgoing
+    set (link() appends instead). read_latest is tenant-pathed, so a foreign
+    id 404s."""
+    user = user or config.user_id()
+    backend.set_acting_user(user)
+    try:
+        mem = store.read_latest(user, id)
+    except FileNotFoundError:
+        raise ValueError(f"memory {id} not found")
+
+    changed: list[str] = []
+    if content is not None:
+        body = content.strip()
+        if not body:
+            raise ValueError("content must be non-empty")
+        body_bytes = len(body.encode("utf-8"))
+        if body_bytes > config.max_body_bytes():
+            raise ValueError(
+                f"content is {body_bytes} bytes, over the {config.max_body_bytes()}-byte limit "
+                "— split this into smaller, more atomic memories"
+            )
+        if body != mem.body:
+            mem.body = body
+            changed.append("content")
+    if type is not None:
+        if type not in config.MEMORY_TYPES:
+            allowed = ", ".join(sorted(config.MEMORY_TYPES))
+            raise ValueError(f"type must be one of: {allowed} (got {type!r})")
+        if type != mem.type:
+            mem.type = type
+            changed.append("type")
+    if entities is not None:
+        norm = normalize_entities(entities)
+        if norm != mem.entities:
+            mem.entities = norm
+            changed.append("entities")
+    if tags is not None:
+        norm = normalize_tags(tags)
+        if norm != mem.tags:
+            mem.tags = norm
+            changed.append("tags")
+    if kv is not None:
+        norm = normalize_kv(kv)
+        if norm != mem.kv:
+            mem.kv = norm
+            changed.append("kv")
+    if links is not None:
+        resolved = _validate_links(backend, user, links, exclude=id)
+        if resolved != mem.links:
+            mem.links = resolved
+            changed.append("links")
+
+    if not changed:
+        return {"id": mem.id, "changed": [], "updated": mem.updated}
+
+    mem.updated = utc_now()
+    store.write_blob(mem)
+    backend.project_memory(mem)
+    backend.emit_event("memory.updated", {"id": mem.id, "user": user, "fields": changed})
+    return {
+        "id": mem.id, "type": mem.type, "entities": mem.entities, "tags": mem.tags,
+        "kv": mem.kv, "links": mem.links, "created": mem.created,
+        "updated": mem.updated, "changed": changed,
+    }
+
+
 def forget(backend: Backend, id: str, user: str | None = None) -> dict:
     user = user or config.user_id()
     backend.set_acting_user(user)
