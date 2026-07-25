@@ -387,6 +387,25 @@ class PostgresBackend(Backend):
                 for r in cur.fetchall()
             }
 
+    def scan_memories(self, user: str, after_id: str, limit: int) -> list[dict]:
+        # keyset on the ULID primary key: an index-range scan, never OFFSET
+        with self.conn.cursor() as cur:
+            cur.execute(
+                """SELECT id, type, body, meta, created_at FROM memories
+                   WHERE user_id = %s AND id > %s ORDER BY id LIMIT %s""",
+                (user, after_id, limit),
+            )
+            return [
+                {"id": r["id"], "type": r["type"], "body": r["body"],
+                 "meta": r["meta"], "created": _iso(r["created_at"])}
+                for r in cur.fetchall()
+            ]
+
+    def all_edges(self, user: str) -> list[dict]:
+        with self.conn.cursor() as cur:
+            cur.execute("SELECT src, dst, rel FROM edges WHERE user_id = %s", (user,))
+            return [{"src": r["src"], "dst": r["dst"], "rel": r["rel"]} for r in cur.fetchall()]
+
     def iter_meta(self, user: str) -> Iterator[tuple[str, dict]]:
         with self.conn.cursor() as cur:
             cur.execute("SELECT type, meta FROM memories WHERE user_id = %s", (user,))

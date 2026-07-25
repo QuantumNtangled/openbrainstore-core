@@ -286,6 +286,43 @@ def recall(
 
 
 @mcp.tool()
+def list_memories(
+    cursor: str | None = None,
+    limit: int = 100,
+    fields: str = "summary",
+) -> dict:
+    """Enumerate memories in creation order — browsing, not searching (recall
+    is for relevance). Keyset-paginated: call repeatedly, passing back
+    next_cursor, until it returns null.
+
+    Args:
+        cursor: Opaque pagination cursor from the previous page's next_cursor.
+            Omit for the first page.
+        limit: Page size, 1-200 (default 100).
+        fields: "summary" (id, type, title, tags, entities, links, created)
+            or "full" (adds body, kv, updated).
+
+    Returns {items, next_cursor}.
+    """
+    with get_backend() as backend:
+        return service.list_memories(
+            backend, cursor=cursor, limit=limit, fields=fields, user=_current_user(),
+        )
+
+
+@mcp.tool()
+def graph() -> dict:
+    """The whole knowledge graph in one call: every memory as a lightweight
+    node stub (id, type, title, created — no bodies) plus every edge —
+    MENTIONS edges to ent:<name> entity nodes and explicit LINKS_TO edges
+    between memories. Cheap by design; use it to render or reason about the
+    structure of the store, then fetch bodies via recall or list_memories.
+    """
+    with get_backend() as backend:
+        return service.graph(backend, user=_current_user())
+
+
+@mcp.tool()
 def get_memory_schema() -> dict:
     """Return the user's live memory vocabulary: distinct kv keys with top
     values, known entities, tags, and per-type counts. Call this BEFORE writing

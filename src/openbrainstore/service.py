@@ -201,6 +201,75 @@ def forget(backend: Backend, id: str, user: str | None = None) -> dict:
     return {"id": id, "status": "tombstoned", "retain_days": config.TOMBSTONE_RETAIN_DAYS}
 
 
+LIST_MAX_LIMIT = 200
+_TITLE_CHARS = 120
+
+
+def _stub_title(body: str) -> str:
+    for line in (body or "").split("\n"):
+        line = line.strip()
+        if line:
+            line = line.lstrip("#").replace("**", "").replace("`", "").lstrip("- ").strip()
+            return line[:_TITLE_CHARS]
+    return "(empty)"
+
+
+def list_memories(
+    backend: Backend,
+    cursor: str | None = None,
+    limit: int = 100,
+    fields: str = "summary",
+    user: str | None = None,
+) -> dict:
+    """Enumerate memories in stable id (ULID = creation) order via keyset
+    pagination. Enumeration, not retrieval: no lanes, no fusion — a plain
+    index scan the DB barely notices. Pass next_cursor back until null."""
+    if fields not in ("summary", "full"):
+        raise ValueError("fields must be 'summary' or 'full'")
+    user = user or config.user_id()
+    backend.set_acting_user(user)
+    limit = max(1, min(int(limit), LIST_MAX_LIMIT))
+    rows = backend.scan_memories(user, cursor or "", limit)
+    items = []
+    for r in rows:
+        meta = r["meta"]
+        item = {
+            "id": r["id"], "type": r["type"], "title": _stub_title(r["body"]),
+            "tags": meta.get("tags") or [], "entities": meta.get("entities") or [],
+            "links": meta.get("links") or [], "created": r["created"],
+        }
+        if fields == "full":
+            item["body"] = r["body"]
+            item["kv"] = meta.get("kv") or {}
+            item["updated"] = meta.get("updated")
+        items.append(item)
+    return {
+        "items": items,
+        "next_cursor": rows[-1]["id"] if len(rows) == limit else None,
+    }
+
+
+def graph(backend: Backend, user: str | None = None) -> dict:
+    """The whole knowledge graph in one cheap shape: node stubs (no bodies)
+    plus every edge from the adjacency table — MENTIONS to ent:* nodes and
+    explicit LINKS_TO between memories."""
+    user = user or config.user_id()
+    backend.set_acting_user(user)
+    nodes, cursor, pages = [], "", 0
+    while pages < 250:  # safety: 250 * 500 = well past any tenant quota
+        rows = backend.scan_memories(user, cursor, 500)
+        for r in rows:
+            nodes.append({
+                "id": r["id"], "type": r["type"], "title": _stub_title(r["body"]),
+                "created": r["created"],
+            })
+        if len(rows) < 500:
+            break
+        cursor = rows[-1]["id"]
+        pages += 1
+    return {"nodes": nodes, "edges": backend.all_edges(user)}
+
+
 def get_memory_schema(backend: Backend, user: str | None = None) -> dict:
     """The vocabulary-drift defense: the user's live vocabulary, so agents
     reuse existing keys instead of inventing near-duplicates."""

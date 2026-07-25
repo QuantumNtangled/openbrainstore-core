@@ -207,6 +207,50 @@ def test_update_noop_and_validation(backend):
         service.update(backend, a["id"], content="   ")
 
 
+def test_list_memories_keyset_pagination(backend):
+    a, b, c = seed(backend)
+    page1 = service.list_memories(backend, limit=2)
+    assert len(page1["items"]) == 2
+    assert page1["next_cursor"] == page1["items"][-1]["id"]
+    page2 = service.list_memories(backend, cursor=page1["next_cursor"], limit=2)
+    assert len(page2["items"]) == 1
+    assert page2["next_cursor"] is None
+    ids = [i["id"] for i in page1["items"] + page2["items"]]
+    assert ids == sorted(ids)                       # stable ULID order
+    assert set(ids) == {a["id"], b["id"], c["id"]}  # complete, no dupes
+
+
+def test_list_memories_fields(backend):
+    seed(backend)
+    summary = service.list_memories(backend)["items"][0]
+    assert "body" not in summary and "kv" not in summary
+    assert summary["title"] and len(summary["title"]) <= 120
+    full = service.list_memories(backend, fields="full")["items"][0]
+    assert "body" in full and "kv" in full
+    with pytest.raises(ValueError, match="fields"):
+        service.list_memories(backend, fields="everything")
+
+
+def test_list_memories_clamps_limit(backend):
+    seed(backend)
+    out = service.list_memories(backend, limit=99999)
+    assert len(out["items"]) == 3  # clamped, not erroring
+
+
+def test_graph_returns_stubs_and_edges(backend):
+    a, b, c = seed(backend)
+    service.link(backend, a["id"], [c["id"]])
+    g = service.graph(backend)
+    ids = {n["id"] for n in g["nodes"]}
+    assert ids == {a["id"], b["id"], c["id"]}
+    assert all("body" not in n and n["title"] for n in g["nodes"])
+    rels = {}
+    for e in g["edges"]:
+        rels.setdefault(e["rel"], []).append(e)
+    assert any(e["src"] == a["id"] and e["dst"] == "ent:postgres" for e in rels["MENTIONS"])
+    assert any(e["src"] == a["id"] and e["dst"] == c["id"] for e in rels["LINKS_TO"])
+
+
 def test_forget_tombstones(backend):
     a, _, _ = seed(backend)
     service.forget(backend, a["id"])

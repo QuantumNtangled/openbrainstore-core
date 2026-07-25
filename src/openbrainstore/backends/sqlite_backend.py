@@ -298,6 +298,24 @@ class SqliteBackend(Backend):
                 }
         return out
 
+    def scan_memories(self, user: str, after_id: str, limit: int) -> list[dict]:
+        rows = self.conn.execute(
+            """SELECT id, type, body, meta, created_at FROM memories
+               WHERE user_id = ? AND id > ? ORDER BY id LIMIT ?""",
+            (user, after_id, limit),
+        ).fetchall()
+        return [
+            {"id": r["id"], "type": r["type"], "body": r["body"],
+             "meta": json.loads(r["meta"]), "created": r["created_at"]}
+            for r in rows
+        ]
+
+    def all_edges(self, user: str) -> list[dict]:
+        rows = self.conn.execute(
+            "SELECT src, dst, rel FROM edges WHERE user_id = ?", (user,)
+        ).fetchall()
+        return [{"src": r["src"], "dst": r["dst"], "rel": r["rel"]} for r in rows]
+
     def iter_meta(self, user: str) -> Iterator[tuple[str, dict]]:
         for row in self.conn.execute(
             "SELECT type, meta FROM memories WHERE user_id = ?", (user,)

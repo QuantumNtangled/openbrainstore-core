@@ -59,6 +59,18 @@ class Backend(ABC):
         """id -> {id, type, body, meta, created} for existing ids."""
 
     @abstractmethod
+    def scan_memories(self, user: str, after_id: str, limit: int) -> list[dict]:
+        """Keyset page: rows with id > after_id, ordered by id, at most limit.
+        Enumeration, not retrieval — a plain index-range scan, O(page) per
+        call regardless of corpus depth (never OFFSET)."""
+
+    @abstractmethod
+    def all_edges(self, user: str) -> list[dict]:
+        """Every edge for the tenant as {src, dst, rel} — the graph's
+        adjacency list, orders smaller than bodies."""
+
+
+    @abstractmethod
     def iter_meta(self, user: str) -> Iterator[tuple[str, dict]]:
         """(type, meta) for every memory of the user."""
 
