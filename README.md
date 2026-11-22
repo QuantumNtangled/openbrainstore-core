@@ -38,10 +38,29 @@ This repository is the source you can read and self-host.
 
 ## MCP surface
 
-`remember` · `recall` · `get_memory_schema` · `link` · `forget` · `export`
+`remember` · `update` · `recall` · `list_memories` · `graph` · `get_memory_schema` ·
+`link` · `forget` · `export`
+
+With `OBS_CATALOG` set, a **skill catalog** adds `agent_startup` · `get_skill` ·
+`propose_skill` · `log_episode`: curated, versioned guidance (skills, procedures,
+checklists, guardrails, agent profiles) that any MCP client loads by reference.
+Agents can only *propose* items as drafts; a human promotes them with
+`obs catalog promote`. See [docs/specs/skill-catalog.md](docs/specs/skill-catalog.md).
 
 The tool schema is the contract — everything works from the tool descriptions
-alone, because the server doesn't control the calling client.
+alone, because the server doesn't control the calling client. Every tool declares
+a title and annotations (read-only, destructive, open-world), and the server sends
+no `instructions`: how your agents use OpenBrainStore is up to you. A starting point
+for `CLAUDE.md`, `AGENTS.md` or a system prompt:
+
+```markdown
+## OpenBrainStore
+- At the start of non-trivial work, call `agent_startup` with a one-line description
+  of the task. Fetch the catalog items that apply with `get_skill`, and follow the
+  guardrails it returns.
+- Before answering questions about past work, decisions or preferences, `recall` them.
+- When you learn something durable (a decision, a fact, a preference), `remember` it.
+```
 
 ## Quickstart
 

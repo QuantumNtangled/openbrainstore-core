@@ -6,8 +6,9 @@ import os
 from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
+from mcp.types import ToolAnnotations
 
-from . import config, service
+from . import catalog, config, service
 from .backends import get_backend
 from .recall import recall as run_recall
 
@@ -58,6 +59,15 @@ def _auth_components():
 
 
 _provider, _auth_settings = _auth_components()
+
+# No server `instructions`: when to call agent_startup is the user's call, made in their
+# own agent instructions (CLAUDE.md, AGENTS.md; see docs/specs/skill-catalog.md).
+CATALOG_TOOLS = ("agent_startup", "get_skill", "log_episode", "propose_skill")
+CATALOG_OFF_MESSAGE = (
+    "The skill catalog is off for this account. The server's operator can turn it on with "
+    "`obs catalog enable` (or set OBS_CATALOG=all for every account); then reconnect your "
+    "AI client."
+)
 
 mcp = FastMCP(
     "openbrainstore",
@@ -160,7 +170,18 @@ def _current_user() -> str:
     return config.user_id()
 
 
-@mcp.tool()
+def _hints(title: str, effect: str, idempotent: bool = False) -> dict:
+    """A tool's title and annotations, which MCP hosts and app directories read to decide
+    what needs the user's confirmation. effect: "read" changes nothing the user can see,
+    "add" only adds, "change" overwrites or deletes. Every tool works only on the caller's
+    own store, so none is open-world."""
+    extra = {} if effect == "read" else {"idempotentHint": idempotent}
+    return {"title": title, "annotations": ToolAnnotations(
+        title=title, readOnlyHint=effect == "read", destructiveHint=effect == "change",
+        openWorldHint=False, **extra)}
+
+
+@mcp.tool(**_hints("Remember", "add"))
 def remember(
     content: str,
     type: str,
@@ -197,7 +218,7 @@ def remember(
                                 source_harness="mcp", user=_current_user())
 
 
-@mcp.tool()
+@mcp.tool(**_hints("Update memory", "change"))
 def update(
     id: str,
     content: str | None = None,
@@ -231,7 +252,7 @@ def update(
         )
 
 
-@mcp.tool()
+@mcp.tool(**_hints("Recall memories", "read"))
 def recall(
     query: str | None = None,
     type: str | None = None,
@@ -285,7 +306,7 @@ def recall(
         )
 
 
-@mcp.tool()
+@mcp.tool(**_hints("List memories", "read"))
 def list_memories(
     cursor: str | None = None,
     limit: int = 100,
@@ -310,7 +331,7 @@ def list_memories(
         )
 
 
-@mcp.tool()
+@mcp.tool(**_hints("Memory graph", "read"))
 def graph() -> dict:
     """The whole knowledge graph in one call: every memory as a lightweight
     node stub (id, type, title, created — no bodies) plus every edge —
@@ -322,7 +343,7 @@ def graph() -> dict:
         return service.graph(backend, user=_current_user())
 
 
-@mcp.tool()
+@mcp.tool(**_hints("Memory vocabulary", "read"))
 def get_memory_schema() -> dict:
     """Return the user's live memory vocabulary: distinct kv keys with top
     values, known entities, tags, and per-type counts. Call this BEFORE writing
@@ -332,7 +353,7 @@ def get_memory_schema() -> dict:
         return service.get_memory_schema(backend, user=_current_user())
 
 
-@mcp.tool()
+@mcp.tool(**_hints("Link memories", "add", idempotent=True))
 def link(id: str, to: list[str]) -> dict:
     """Link an existing memory to other related memories after the fact.
     Use when you notice two memories belong together (a decision and the event
@@ -350,7 +371,7 @@ def link(id: str, to: list[str]) -> dict:
         return service.link(backend, id, to, user=_current_user())
 
 
-@mcp.tool()
+@mcp.tool(**_hints("Forget memory", "change", idempotent=True))
 def forget(id: str) -> dict:
     """Delete a memory by id. Projections are removed immediately; the canonical
     file is tombstoned (retained for a grace period, then purged)."""
@@ -358,7 +379,7 @@ def forget(id: str) -> dict:
         return service.forget(backend, id, user=_current_user())
 
 
-@mcp.tool()
+@mcp.tool(**_hints("Export memories", "read"))
 def export(raw: bool = False) -> dict:
     """Export all memories as a tar.gz and return its local path — your memory
     is markdown you can take with you.
@@ -368,6 +389,152 @@ def export(raw: bool = False) -> dict:
     pages, and your identity stripped so it's safe to share. Set raw=true for
     the full-fidelity internal dump (every version, exactly as stored)."""
     return service.export(user=_current_user(), profile="raw" if raw else "okf")
+
+
+# ---- Skill catalog (docs/specs/skill-catalog.md) — registered only with OBS_CATALOG set ----
+
+def _require_catalog(backend) -> None:
+    """The real guard for per-account opt-in (hiding tools from tools/list is a nicety)."""
+    if not catalog.account_enabled(backend, _current_user()):
+        raise ValueError(CATALOG_OFF_MESSAGE)
+
+
+def agent_startup(task: str = "", harness: str = "", model: str = "", mode: str = "ground",
+                  agent: str = "", format: str = "markdown") -> str | dict:
+    """Start a catalog session at the beginning of a task. Returns the catalog index for
+    this account: curated skills, procedures and checklists that say how this user's work
+    should be done, plus guardrails to follow at all times. The user's own agent
+    instructions (for example CLAUDE.md or AGENTS.md) say when to use the catalog.
+
+    The index lists items by reference only (ref, title, when_to_use). For every item
+    whose when_to_use matches your task, fetch its full text with get_skill before acting.
+
+    Args:
+        task: One or two sentences describing what you are about to do (used to rank
+            the index when the catalog is large).
+        harness: Your client or framework name (e.g. "claude-code", "codex").
+        model: Your model name, if known.
+        mode: "ground" (default) for normal work. "optimize" only when the user has asked
+            for an agent-building run that should be scored; then you must call
+            log_episode when finished.
+        agent: Optional agent profile to run as (e.g. "reviewer"): you get that profile's
+            role and skills.
+        format: "markdown" (default, easiest to read) or "json" for programmatic clients.
+
+    Returns the session_id (pass it to get_skill and log_episode), snapshot, guardrails,
+    the index, and how-to-use instructions.
+    """
+    with get_backend() as backend:
+        _require_catalog(backend)
+        res = catalog.startup(backend, _current_user(), task=task, harness=harness, model=model,
+                              mode=mode, agent=agent)
+    return res if format == "json" else catalog.render_startup(res)
+
+
+def get_skill(refs: list[str], session_id: str = "", format: str = "markdown") -> str | dict:
+    """Fetch the full text of catalog items listed by agent_startup.
+
+    Args:
+        refs: 1-10 refs exactly as shown in the index (e.g. "skill:final-checklist@v2").
+            Batch every item you need into one call. A bare slug returns the currently
+            promoted version.
+        session_id: The session_id from agent_startup, so usage is attributed.
+        format: "markdown" (default, easiest to read) or "json" for programmatic clients.
+
+    Returns each item's full text (and lists any refs not found). Follow the guidance in
+    each item; it was built from this user's verified past work.
+    """
+    with get_backend() as backend:
+        _require_catalog(backend)
+        res = catalog.get_skills(backend, _current_user(), refs, session_id=session_id)
+    return res if format == "json" else catalog.render_skills(res)
+
+
+def log_episode(session_id: str, outcome: str, summary: str, corrections: str = "",
+                score: float | None = None) -> dict:
+    """Record how an agent-building run went. Only valid for sessions started with
+    agent_startup(mode="optimize"); ordinary sessions are never recorded.
+
+    Args:
+        session_id: The session_id from agent_startup.
+        outcome: One of: success | failure | partial | unknown.
+        summary: What the task was and what happened, in a few sentences.
+        corrections: Anything the user corrected or redirected — the strongest signal
+            for improving the catalog.
+        score: Optional 0-1 score when an objective check exists (tests, a grader).
+
+    The outcome is credited to the catalog item versions this session fetched.
+    Episodes expire after 30 days and never count against the memory quota.
+    """
+    with get_backend() as backend:
+        _require_catalog(backend)
+        return catalog.log_episode(backend, _current_user(), session_id, outcome, summary,
+                                   corrections=corrections, score=score)
+
+
+def propose_skill(slug: str, title: str, when_to_use: str, body: str, kind: str = "skill",
+                  evidence: list[str] | None = None, session_id: str = "") -> dict:
+    """Propose a new catalog item, or a new version of an existing one. Proposals are
+    saved as drafts: they are never served to agents until a human reviews and
+    promotes them.
+
+    Args:
+        slug: Item name: lowercase letters, digits and hyphens (e.g. "sepsis-sequencing").
+            Reusing an existing slug proposes its next version.
+        title: Short human-readable title.
+        when_to_use: One sentence (at most 40 words) saying when an agent should load it.
+        body: The guidance, as Markdown. Generalize: rules that apply to future tasks,
+            never answers for one specific case. Scripts go in fenced code blocks.
+        kind: One of: skill | procedure | guardrail | checklist | script | agent.
+        evidence: Optional episode ids that support the proposal.
+        session_id: The session_id from agent_startup, if any.
+    """
+    with get_backend() as backend:
+        _require_catalog(backend)
+        return catalog.propose(backend, _current_user(), slug, title, when_to_use, body,
+                               kind=kind, evidence=evidence, session_id=session_id)
+
+
+if config.catalog_enabled():
+    # structured_output=False: otherwise FastMCP wraps the Markdown as {"result": "..."}
+    # and clients show the model escaped JSON instead of readable text.
+    # agent_startup and get_skill count as reads: they change no catalog item or memory,
+    # and only record which items were served (usage stats).
+    mcp.tool(structured_output=False, **_hints("Start catalog session", "read"))(agent_startup)
+    mcp.tool(structured_output=False, **_hints("Get catalog items", "read"))(get_skill)
+    mcp.tool(**_hints("Log agent episode", "add"))(log_episode)
+    mcp.tool(**_hints("Propose catalog item", "add"))(propose_skill)
+
+if config.catalog_mode() == "optin":
+    # In opt-in mode, accounts that haven't turned the catalog on don't see its tools.
+    # Short per-user cache, because clients list tools often and the answer changes
+    # only when the operator flips the switch.
+    import time as _time
+
+    import anyio
+
+    _all_tools = mcp.list_tools
+    _visible_cache: dict[str, tuple[float, bool]] = {}
+
+    def _catalog_on_for(user: str) -> bool:
+        hit = _visible_cache.get(user)
+        if hit and _time.monotonic() - hit[0] < 30:
+            return hit[1]
+        try:
+            with get_backend() as backend:
+                on = catalog.account_enabled(backend, user)
+        except Exception:
+            on = False
+        _visible_cache[user] = (_time.monotonic(), on)
+        return on
+
+    async def _list_tools_for_caller():
+        tools = await _all_tools()
+        if not await anyio.to_thread.run_sync(_catalog_on_for, _current_user()):
+            tools = [t for t in tools if t.name not in CATALOG_TOOLS]
+        return tools
+
+    mcp._mcp_server.list_tools()(_list_tools_for_caller)
 
 
 def main(http: bool = False, host: str = "127.0.0.1", port: int = 8787) -> None:

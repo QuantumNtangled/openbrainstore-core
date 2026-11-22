@@ -349,7 +349,11 @@ def reindex(backend: Backend, user: str | None = None) -> dict:
     for mem_id in store.list_memory_ids(user):
         backend.project_memory(store.read_latest(user, mem_id))
         count += 1
-    return {"reindexed": count}
+    result = {"reindexed": count}
+    if config.catalog_enabled():
+        from . import catalog
+        result.update(catalog.reindex(backend, user))
+    return result
 
 
 def stats(backend: Backend, user: str | None = None) -> dict:
