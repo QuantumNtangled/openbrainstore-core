@@ -5,6 +5,7 @@
     obs recall "query" [--type t] [--entities a,b] [--deep]
     obs schema | stats | export | reindex | embed | purge
     obs forget mem_...
+    obs catalog import <dir> | list | show <ref> | promote | reject | retire <slug> | stats | episodes | enable | disable
 
 Backend selection: OBS_BACKEND=sqlite (default) or postgres (OBS_PG_DSN).
 """
@@ -36,6 +37,31 @@ def _kv_pairs(pairs: list[str] | None) -> dict | None:
 
 def _print(obj) -> None:
     print(json.dumps(obj, indent=2, ensure_ascii=False))
+
+
+def _catalog(args) -> None:
+    from . import catalog
+
+    user = args.user or config.user_id()
+    with get_backend() as backend:
+        if args.catalog_cmd == "import":
+            _print(catalog.import_dir(backend, user, args.dir, promote=not args.draft))
+        elif args.catalog_cmd == "list":
+            _print(catalog.list_items(backend, user, status=args.status))
+        elif args.catalog_cmd == "show":
+            _print(catalog.show(backend, user, args.ref))
+        elif args.catalog_cmd == "promote":
+            _print(catalog.promote_version(backend, user, args.slug, args.version))
+        elif args.catalog_cmd == "retire":
+            _print(catalog.retire(backend, user, args.slug))
+        elif args.catalog_cmd == "stats":
+            _print(catalog.stats(backend, user))
+        elif args.catalog_cmd in ("enable", "disable"):
+            _print(catalog.set_account_enabled(backend, user, args.catalog_cmd == "enable"))
+        elif args.catalog_cmd == "reject":
+            _print(catalog.reject(backend, user, args.slug, args.version, by="human:cli"))
+        elif args.catalog_cmd == "episodes":
+            _print(catalog.episodes(backend, user, limit=args.limit))
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -92,7 +118,35 @@ def main(argv: list[str] | None = None) -> None:
     sub.add_parser("embed", help="backfill embeddings (requires [vector] extra)")
     sub.add_parser("purge", help="purge expired tombstones")
 
+    p = sub.add_parser("catalog", help="review and govern the skill catalog (human-only actions)")
+    p.add_argument("--user", default=None, help="tenant to act on (default: OBS_USER)")
+    cat_sub = p.add_subparsers(dest="catalog_cmd", required=True)
+    pc = cat_sub.add_parser("import", help="import INDEX.md + item files (promoted unless --draft)")
+    pc.add_argument("dir")
+    pc.add_argument("--draft", action="store_true", help="import as drafts for review")
+    pc = cat_sub.add_parser("list", help="list items and versions")
+    pc.add_argument("--status", choices=["draft", "promoted", "retired"])
+    pc = cat_sub.add_parser("show", help="show one item version (slug or kind:slug@vN)")
+    pc.add_argument("ref")
+    pc = cat_sub.add_parser("promote", help="promote a version (default: newest draft)")
+    pc.add_argument("slug")
+    pc.add_argument("--version", type=int, default=None)
+    pc = cat_sub.add_parser("retire", help="stop serving an item")
+    pc.add_argument("slug")
+    cat_sub.add_parser("stats", help="fetches, sessions and episode outcomes per version")
+    cat_sub.add_parser("enable", help="turn the catalog on for this account (opt-in mode)")
+    cat_sub.add_parser("disable", help="turn the catalog off for this account")
+    pc = cat_sub.add_parser("reject", help="reject a draft (default: newest draft)")
+    pc.add_argument("slug")
+    pc.add_argument("--version", type=int, default=None)
+    pc = cat_sub.add_parser("episodes", help="recent agent-building episodes")
+    pc.add_argument("--limit", type=int, default=20)
+
     args = parser.parse_args(argv)
+
+    if args.cmd == "catalog":
+        _catalog(args)
+        return
 
     if args.cmd == "serve":
         from .server import main as serve_main

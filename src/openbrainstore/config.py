@@ -109,5 +109,38 @@ def unauth_rate_per_min() -> int:
     return int(os.environ.get("OBS_UNAUTH_RATE_PER_MIN", "30"))
 
 
+# ---- Skill catalog (docs/specs/skill-catalog.md) ----
+
+CATALOG_KINDS = {"skill", "procedure", "guardrail", "checklist", "script", "agent"}
+EPISODE_OUTCOMES = {"success", "failure", "partial", "unknown"}
+
+
+def catalog_mode() -> str:
+    """'off' | 'optin' (each account turns it on) | 'all' (every account)."""
+    raw = (os.environ.get("OBS_CATALOG") or "").strip().lower()
+    if raw == "all":
+        return "all"
+    if raw in ("1", "true", "yes", "optin", "on"):
+        return "optin"
+    return "off"
+
+
+def catalog_enabled() -> bool:
+    """The catalog is available on this server (tools registered)."""
+    return catalog_mode() != "off"
+
+
+def catalog_max_items() -> int:
+    return int(os.environ.get("OBS_CATALOG_MAX_ITEMS") or 200)
+
+
+def catalog_index_cap() -> int:
+    return int(os.environ.get("OBS_CATALOG_INDEX_CAP") or 40)
+
+
+def episode_ttl_days() -> int:
+    return int(os.environ.get("OBS_EPISODE_TTL_DAYS") or 30)
+
+
 def pg_dsn() -> str:
     return os.environ.get("OBS_PG_DSN", "postgresql://obs:obs@localhost:5432/openbrainstore")

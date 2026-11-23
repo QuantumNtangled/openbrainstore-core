@@ -53,6 +53,7 @@ services:
       OBS_MAX_BODY_BYTES: ${OBS_MAX_BODY_BYTES:-65536}
       OBS_RATE_PER_MIN: ${OBS_RATE_PER_MIN:-120}
       OBS_UNAUTH_RATE_PER_MIN: ${OBS_UNAUTH_RATE_PER_MIN:-30}
+      OBS_CATALOG: ${OBS_CATALOG:-}             # skill catalog: empty = off, 1 = per-account opt-in, all
     volumes:
       - obsdata:/home/obs/.openbrainstore
     expose:
