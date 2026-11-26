@@ -288,6 +288,26 @@ def test_profile_skill_validation(cat):
     assert listed["skills"] == ["a-skill"]
 
 
+
+def test_proposed_profile_is_a_draft_until_promoted(cat, monkeypatch):
+    """An agent (or a review pipeline) can propose a profile's skill list over MCP; only the
+    CLI or the Python API promotes it."""
+    from openbrainstore import server
+    monkeypatch.setenv("OBS_CATALOG", "all")
+    _profiles_fixture(cat)
+    with pytest.raises(ValueError, match="only agent profiles"):
+        server.propose_skill("plain", "Plain", "when plain", "Body.", skills=["review-checklist"])
+    out = server.propose_skill("candidate", "Candidate", "measuring candidate skills",
+                               "You are measured.", kind="agent", skills=["review-checklist"])
+    assert out["ref"] == "agent:candidate@v1" and out["status"] == "draft"
+    with pytest.raises(ValueError, match="no live agent profile"):
+        catalog.startup(cat, U, agent="candidate")             # drafts are never served
+    catalog.promote_version(cat, U, "candidate", by="pipeline:score-check")
+    s = catalog.startup(cat, U, agent="candidate")
+    assert "skill:review-checklist@v1" in {i["ref"] for i in s["index"]}
+    hist = catalog._read_state(U, "candidate")["history"]
+    assert [(h["action"], h["by"]) for h in hist] == [("add", "agent:mcp"), ("promote", "pipeline:score-check")]
+
 def test_migration_adds_new_columns(tmp_path, monkeypatch):
     """Production created the catalog tables before profiles existed; the new columns
     must be added in place."""

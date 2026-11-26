@@ -343,7 +343,7 @@ def add_version(backend: Backend, user: str, slug: str, title: str, when_to_use:
 
 def propose(backend: Backend, user: str, slug: str, title: str, when_to_use: str, body: str,
             kind: str = "skill", evidence: list[str] | None = None, session_id: str = "",
-            actor: str = "") -> dict:
+            actor: str = "", skills: list[str] | None = None) -> dict:
     """Agent path: always a draft. A human promotes it (or not) from the CLI."""
     harness = "mcp"
     if session_id:
@@ -353,7 +353,8 @@ def propose(backend: Backend, user: str, slug: str, title: str, when_to_use: str
             raise ValueError(f"unknown session {session_id}")
         harness = rows[0]["harness"] or "mcp"
     out = add_version(backend, user, slug, title, when_to_use, body, kind=kind,
-                      created_by=f"agent:{actor or harness}", session_id=session_id, evidence=evidence)
+                      created_by=f"agent:{actor or harness}", session_id=session_id, evidence=evidence,
+                      skills=skills)
     out["note"] = "Saved as a draft. Drafts are never served; a human must review and promote it."
     return out
 

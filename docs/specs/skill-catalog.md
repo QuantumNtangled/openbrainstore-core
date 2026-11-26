@@ -101,9 +101,10 @@ the session.
 **`log_episode(session_id, outcome, summary, corrections="", score=None)`** records how an
 optimize-mode run went. The outcome is credited to the versions that session fetched.
 
-**`propose_skill(slug, title, when_to_use, body, kind="skill", evidence=None, session_id="")`**
-saves the next version of an item as a **draft**. Agents can never promote, retire or
-delete.
+**`propose_skill(slug, title, when_to_use, body, kind="skill", evidence=None, session_id="", skills=None)`**
+saves the next version of an item as a **draft**. `skills` is only for kind `agent`: an agent
+profile's skill list, so a pipeline can propose the profile it wants measured. Agents can
+never promote, retire or delete.
 
 Agent-facing tools return Markdown by default (`format="json"` for programmatic clients):
 models follow guidance delivered as plain Markdown documents far more reliably than the
@@ -129,6 +130,13 @@ Markdown file per item (optional YAML frontmatter: `kind`, `title`).
 
 Before promoting a changed item, run it against a few held-out tasks: an over-broad
 item can make agents apply it where it doesn't belong.
+
+A review pipeline you run yourself, such as a score check on held-out tasks, decides the
+same way: it runs these commands, or calls `catalog.promote_version`, `catalog.reject` and
+`catalog.retire` from Python with `by=` naming the pipeline, so the item's history records
+who decided. There is deliberately no MCP tool for approving. Core has no agent keys to say
+which callers may approve, so such a tool would let any connected agent approve its own
+proposals.
 
 ## Limits
 

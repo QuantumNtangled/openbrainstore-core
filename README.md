@@ -45,7 +45,9 @@ With `OBS_CATALOG` set, a **skill catalog** adds `agent_startup` · `get_skill` 
 `propose_skill` · `log_episode`: curated, versioned guidance (skills, procedures,
 checklists, guardrails, agent profiles) that any MCP client loads by reference.
 Agents can only *propose* items as drafts; a human promotes them with
-`obs catalog promote`. See [docs/specs/skill-catalog.md](docs/specs/skill-catalog.md).
+`obs catalog promote`. A review pipeline you run yourself (a score check on held-out
+tasks, say) approves the same way, through the CLI or `catalog.promote_version` in Python;
+no MCP tool approves anything. See [docs/specs/skill-catalog.md](docs/specs/skill-catalog.md).
 
 The tool schema is the contract — everything works from the tool descriptions
 alone, because the server doesn't control the calling client. Every tool declares
