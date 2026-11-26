@@ -473,7 +473,8 @@ def log_episode(session_id: str, outcome: str, summary: str, corrections: str = 
 
 
 def propose_skill(slug: str, title: str, when_to_use: str, body: str, kind: str = "skill",
-                  evidence: list[str] | None = None, session_id: str = "") -> dict:
+                  evidence: list[str] | None = None, session_id: str = "",
+                  skills: list[str] | None = None) -> dict:
     """Propose a new catalog item, or a new version of an existing one. Proposals are
     saved as drafts: they are never served to agents until a human reviews and
     promotes them.
@@ -488,11 +489,13 @@ def propose_skill(slug: str, title: str, when_to_use: str, body: str, kind: str 
         kind: One of: skill | procedure | guardrail | checklist | script | agent.
         evidence: Optional episode ids that support the proposal.
         session_id: The session_id from agent_startup, if any.
+        skills: Only for kind "agent" (an agent profile): the slugs of the items that agent
+            gets. Like any proposal, it changes nothing until a human promotes it.
     """
     with get_backend() as backend:
         _require_catalog(backend)
         return catalog.propose(backend, _current_user(), slug, title, when_to_use, body,
-                               kind=kind, evidence=evidence, session_id=session_id)
+                               kind=kind, evidence=evidence, session_id=session_id, skills=skills)
 
 
 if config.catalog_enabled():
